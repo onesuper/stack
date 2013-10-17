@@ -1,184 +1,201 @@
 
 
-###### general register file
-registers = {
-    'r0': 0,
-    'r1': 11,
-    'r2': 22,
-    'r3': 33,
-    'r4': 44,
-    'r5': 55,
-    'r6': 66,
-    'r7': 77,
-    'sp': 0,
-    'fp': 0,
-    'lr': None,
-    'pc': None,
-}
 
 
-####### Program flow is a class
-class Flow:
-    def __init__(self, obj, cur_label="start"):
+
+
+####### 
+class Code(dict):
+    """
+    In Stack's eye, code(program), whether executable or readable, is a hash table
+        key: labels in the program
+        value: a list of instructions under the label
+    """
+    pass
+
+
+####### Program flow is a object instead of a number
+class Flow(object):
+    "Create a execution flow from a obj file. The default start point is 'start'"
+    def __init__(self, exe, cur_label="start"):
         self.cur_label = cur_label
-        self.context = obj[cur_label]
+        self.context = exe[cur_label]
         self.lineno = 0
 
     def get_inst(self):
         return self.context[self.lineno]
 
-    def step(self):  #pc++
+    def forward(self):  #pc++
         self.lineno += 1
 
     def __str__(self):
         return "@%s+%d" % (self.cur_label, self.lineno)
 
 
-stack = []
-proc_state_word = {}
+class Registers(dict):
+    "Register is just a dict"
+    def __init__(self, parms=(), args=()):
+        self.update(zip(parms,args))
+        
+    def __str__(self):
+        regs = self.items()
+        regs.sort()
+        return ", ".join([": ".join([name, str(val)]) for name, val in regs])
+         
+
+
+class Stack(list):
+    def push(self, val):
+        self.append(val)
+
+    def pop(self):
+        return self.pop()
+
+
+
+
 isa = isinstance
 
 
-def display_gp_regs():
-    gp_regs = ('r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7')
-    regs = registers.items()
-    regs.sort()
-    for key, value in regs:
-        if key in gp_regs:
-            print "|     %s" % key,
-    
-    print "\n", 
-    
-    for key, value in regs:
-        if key in gp_regs:
-            print "|%7d" % value,
+class Machine(object):
+
+    def __init__(self):
+        self.stack = Stack()
+        self.registers = Registers()
+        # register the regs here
+        self.registers.update({
+            'r0': 0,
+            'r1': 11,
+            'r2': 22,
+            'r3': 33,
+            'r4': 44,
+            'r5': 55,
+            'r6': 66,
+            'r7': 77,
+            'sp': 0, 
+            'fp': 0,
+            'lr': None,
+            'pc': None,
+        })
+        self.halt = False
+        self.text_segment = {}
+
+    def load(self, exefile):
+        """
+        Here, the loading machanism is very simple. No mapping is required
+        """
+        self.exe = exefile
+
+        # get the pc ready
+        self.registers['pc'] = Flow(exefile)
 
 
-def display_pc():
-    print registers['pc'], "->" ,
-    print to_string(registers['pc'].get_inst())
-        
-
-def display_context():
-    for inst in registers['pc'].context:
-        print to_string(inst)
-
-def display_remaining_context():
-    for i in range(registers['pc'].lineno, len(registers['pc'].context)):    
-        print to_string(registers['pc'].context[i])   
+    def run(self):
+        "Run forever until halt"
+        while True:
+            print self.registers['pc']
+            print to_string(self.registers['pc'].get_inst())
+            print self.registers
+            print self.stack
+            self.step()
+            if self.halt == True: break
+        print "The computer halts quietly~~~"
 
 
-def display_stack():
-    global fp
-    if len(stack) > 0:
-        for i in range(len(stack)):
-            if registers['fp'] == i:
-                star = "*"
+    def step(self):
+        """
+        In this implementation of virtual machine, PC(programmer counter) is 
+        a iterator object whose next() method always give the instuction to execute
+        """
+
+        x = self.registers['pc'].get_inst()  # x is just like the instruction_register
+        self.registers['pc'].forward()      # pc++
+
+        if x[0] == "not":
+            try:
+                (_, dest, src) = x
+            except ValueError:
+                raise OperandError("%s should have 2 operand" % x[0])
+
+            if not dest in self.registers:
+                raise RegisterError("%s is not a valid dest" % dest)
+
+            if not src in self.registers:
+                raise RegisterError("%s is not a valid src" % src)
+
+            if isa(src, int):
+                self.registers[dest] = ~src
             else:
-                star = ""
-            print "| %d %s" % (stack[i], star), 
-    print "| top"
+                self.registers[dest] = ~self.registers[src]
 
-import sys
+        elif x[0] in ("add", "sub", "and", "or"):     # arithmetic
+            try:
+                (op, dest, src1, src2) = x
+            except ValueError:
+                raise OperandError("%s should have 3 operands" % x[0])
 
-def display_ir():
-    x = registers['pc'].current()
-    print to_string()
+            if not dest in self.registers:
+                raise RegisterError("%s is not a valid dest" % dest)
 
-def execute(exe):
-    """
-    In this implementation of virtual machine, PC(programmer counter) is 
-    a iterator object whose next() method always give the instuction to execute
-    """
+            if not src1 in self.registers:
+                raise RegisterError("%s is not a valid src" % src1)
 
-    x = registers['pc'].get_inst()  # x is just like the instruction_register
-    registers['pc'].step()          # pc ++
+            if isa(src2, int):        #src2 is immediate
+                if op == "add":
+                    self.registers[dest] = self.registers[src1] + src2
+                elif op == "sub":
+                    self.registers[dest] = self.registers[src1] - src2
+                elif op == "and":
+                    self.registers[dest] = self.registers[src1] & src2
+                elif op == "or":
+                    self.registers[dest] = registers[src1] | src2
+            else: # src2 is from register
+                if not src1 in registers:
+                    raise RegisterError("%s is unknown" % src2)
+                if op == "add":
+                    self.registers[dest] = self.registers[src1] + self.registers[src2]
+                elif op == "sub":
+                    self.registers[dest] = self.registers[src1] - self.registers[src2]
+                elif op == "and":
+                    self.registers[dest] = self.registers[src1] & self.registers[src2]
+                elif op == "or":
+                    self.registers[dest] = self.registers[src1] | self.registers[src2]
+
+        elif x[0] in ("push", "pop"):
+            try:
+                (op, reg) = x
+            except ValueError:    
+                raise OperandError("%s should have 1 operand" % x[0])
+
+            if not reg in self.registers:   
+                raise RegisterError("%s is not a valid register" % reg)
+
+            if op == "push":
+                self.stack.push(self.registers[reg])
+                self.registers['sp'] += 1
+            
+            elif op == "pop":
+                self.registers[reg] = self.stack.pop()
+                self.registers['sp'] -=  1
+
+        elif x[0] == "call":
+
+            self.registers['lr'] = self.registers['pc']  # store next "pc" in link register
+
+            (_, target) = x
+
+            if target in self.exe:
+                self.registers['pc'] = Flow(self.exe, target)    # Transfer to a new flow   
+            else:
+                raise RuntimeError("Cannot find the calling target: %s" % target) 
 
 
-    if x[0] == "not":
-        try:
-            (_, dest, src) = x
-        except ValueError:
-            raise OperandError("%s should have 2 operand" % x[0])
 
-        if not dest in registers:
-            raise RegisterError("%s is not a valid dest" % dest)
+        elif x[0] == "ret":
+            self.registers['pc'] = self.registers['lr'] # get the return address from "ret"
 
-        if not src in registers:
-            raise RegisterError("%s is not a valid src" % src)
-
-        if isa(src, int):
-            registers[dest] = ~src
-        else:
-            registers[dest] = ~registers[src]
-
-    elif x[0] in ("add", "sub", "and", "or"):     # arithmetic
-        try:
-            (op, dest, src1, src2) = x
-        except ValueError:
-            raise OperandError("%s should have 3 operands" % x[0])
-
-        if not dest in registers:
-            raise RegisterError("%s is not a valid dest" % dest)
-
-        if not src1 in registers:
-            raise RegisterError("%s is not a valid src" % src1)
-
-        if isa(src2, int):        #src2 is immediate
-            if op == "add":
-                registers[dest] = registers[src1] + src2
-            elif op == "sub":
-                registers[dest] = registers[src1] - src2
-            elif op == "and":
-                registers[dest] = registers[src1] & src2
-            elif op == "or":
-                registers[dest] = registers[src1] | src2
-        else: # src2 is from register
-            if not src1 in registers:
-                raise RegisterError("%s is unknown" % src2)
-            if op == "add":
-                registers[dest] = registers[src1] + registers[src2]
-            elif op == "sub":
-                registers[dest] = registers[src1] - registers[src2]
-            elif op == "and":
-                registers[dest] = registers[src1] & registers[src2]
-            elif op == "or":
-                registers[dest] = registers[src1] | registers[src2]
-
-    elif x[0] in ("push", "pop"):
-        try:
-            (op, reg) = x
-        except ValueError:    
-            raise OperandError("%s should have 1 operand" % x[0])
-
-        if not reg in registers:   
-            raise RegisterError("%s is not a valid register" % reg)
-
-        if op == "push":
-            stack.append(registers[reg])
-            registers['sp'] += 1
-        
-        elif op == "pop":
-            registers[reg] = stack.pop()
-            registers['sp'] -=  1
-
-    elif x[0] == "call":
-
-        registers['lr'] = registers['pc']  # store next "pc" in link register
-
-        (_, target) = x
-
-        if target in exe:
-            registers['pc'] = Flow(exe, target)    # Transfer to a new flow   
-        else:
-            raise RuntimeError("Cannot find the calling target")
-
-    elif x[0] == "ret":
-        registers['pc'] = registers['lr'] # get the return address from "ret"
-
-    elif x[0] == "halt":
-        print "The computer is halted."
-        sys.exit()
+        elif x[0] == "halt":
+            self.halt = True
 
 
 
@@ -281,15 +298,8 @@ def assemble(src_code):
 
 
 
-################## keep running
-def run(obj):
+def load(obj):
+    global registers
     registers['pc'] = Flow(obj)
-    while True:
-        display_pc()
-        #display_context()
-        execute(obj)
-        display_stack()
-        display_gp_regs()
-        print "\n"
 
 

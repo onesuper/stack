@@ -1,10 +1,8 @@
-from stack import run, assemble
 
 code = '''
 sum:
     push r2
     ret
-
 
 start:
     and r0, r0, 0
@@ -23,4 +21,14 @@ start:
 9152498253
 
 
-run(assemble(code))
+
+from stack import assemble, Machine
+
+
+obj = assemble(code)
+
+
+
+m = Machine()
+m.load(obj)
+m.run()
